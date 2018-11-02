@@ -60,8 +60,7 @@ def kalman_obj(y, # int observations
         # measurement update
         K = P_next * H * (1/S) # kalman gain
         x_update = x_pred + K * delta
-        # P = (1 - K*H)*P_next*(1 - K*H) + K*R*K
-        P = (1 - K*H)*P_next
+        P = (1 - K*H)*P_next*(1 - K*H) + K*R*K
     return obj/N
 
 def obj(f, y):
@@ -93,6 +92,5 @@ def kalman_path(y, params, N=1000, return_filter=False):
         # measurement update
         K = P_next * H * (1/S) # kalman gain
         x_update[i] = x_pred[i] + K * delta
-        # P = (1 - K*H)*P_next*(1 - K*H) + K*R*K
-        P = (1 - K*H)*P_next
+        P = (1 - K*H)*P_next*(1 - K*H) + K*R*K
     return (x_pred, x_update) if return_filter else x_pred
