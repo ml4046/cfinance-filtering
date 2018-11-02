@@ -1,5 +1,5 @@
 # IEOR 4732 Computational Methods in Finance
-Particle Filtering in Finance
+Particle Filtering
 
 # Setup
 We suggest setting up a virtual environment to run the provided codes:
