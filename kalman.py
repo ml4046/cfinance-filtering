@@ -118,6 +118,7 @@ def ekf_heston(y, # list observations
     x_update[1,0] = v0
     obj = 0
     for i in range(1, N+1):
+        # TODO: use heston state transition
         x_pred[:, i] = F * x_update[:,i-1]
         P_pred = F*P*F.T + U*Q*U.T
         A = H*P_pred*H.T # only have state transition f
