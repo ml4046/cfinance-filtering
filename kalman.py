@@ -102,6 +102,12 @@ def ekf_heston(y, # list observations
     r = params[6]
     
     # init values
+    def heston_transition(x):
+        x_next = np.matrix([0,0], dtype=np.float64).T
+        x_next[0,0] = x[0,0] + (r-1/2*x[1,0])*dt
+        x_next[1,0] = x[1,0] + kappa*(theta-x[1,0])*dt
+        return x_next
+
     x_pred = np.matrix(np.zeros((2, N+1)))
     x_update = np.matrix(np.zeros((2, N+1)))
     F = np.matrix([[1, -1/2*dt],
@@ -111,30 +117,25 @@ def ekf_heston(y, # list observations
     Q = np.matrix([[1, rho],
                   [rho, 1]])
     H = np.matrix([[1,0]])
-    P = np.matrix([[v0, 0],
-                  [0, v0]])
+    P = np.matrix([[np.sqrt(v0*dt), 0],
+                  [0, np.sqrt(v0*dt)]])
     I = np.identity(2)
     x_update[0,0] = x0
     x_update[1,0] = v0
     obj = 0
     for i in range(1, N+1):
-        # TODO: use heston state transition
-        x_pred[:, i] = F * x_update[:,i-1]
+        x_pred[:, i] = heston_transition(x_update[:,i-1])
         P_pred = F*P*F.T + U*Q*U.T
         A = H*P_pred*H.T # only have state transition f
         delta = y[i] - x_pred[0,i]
-        obj += np.log(A) + delta**2/A
+        obj += np.log(abs(A)) + delta**2/A
 
         # measurement update
         K = P*H.T/A
-        x_update[:,i] = x_pred[:,i] + K*y[i]
+        x_update[:,i] = x_pred[:,i] + K*delta
+        x_update[1,i] = max(1e-5, x_update[1,i]) # ensure vol. is non-neg
+        vk = x_update[1,i]
+        U = np.matrix([[np.sqrt(vk*dt), 0],
+                       [0, lda*np.sqrt(vk*dt)]])
         P = (I-K*H)*P_pred
     return obj if return_obj else x_pred
-
-
-
-
-
-
-
-
