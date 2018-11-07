@@ -42,7 +42,7 @@ def kalman_obj(y, # int observations
     R = params[3]
     x0 = params[4]
     v0 = params[5]
-
+    
     # init values
     obj = 0
     x_update = x0
@@ -53,7 +53,6 @@ def kalman_obj(y, # int observations
         x_pred = F * x_update
         P_next = F*P*F + Q
         S = H*P_next*H + R
-
         delta = y[i] - H*x_pred
         obj += delta * (1/S) * delta + np.log(np.abs(S))
 
