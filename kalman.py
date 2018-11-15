@@ -55,9 +55,12 @@ def kalman_obj(y, # int observations
         P = (1 - K*H)*P_next*(1 - K*H) + K*R*K
     return obj/N
 
-def obj(f, y):
+def obj(f, y, args=None):
     """Wrapper for fmin to allow passing target y to obj. function"""
     def fix_y(params):
+        if args is not None:
+            S0 = args
+            return f(y, params, S0)
         return f(y, params)
     return fix_y
 
@@ -87,24 +90,23 @@ def kalman_path(y, params, N=1000, return_filter=False):
         P = (1 - K*H)*P_next*(1 - K*H) + K*R*K
     return (x_pred, x_update) if return_filter else x_pred
 
-def ekf_heston(y, # list observations
-               params, # list params
-               N = 1000, # int total timestep
-               dt=1/250, # float J step size, default daily
-               return_obj=False
+def ekf_heston_obj(y, # list observations
+                   params, # list params
+                   S0, # float init price
+                   N = 1000, # int total timestep
+                   dt=1/250 # float J step size, default daily
               ):
-    kappa = params[0]
-    theta = params[1]
-    lda = params[2]
-    rho = params[3]
-    v0 = params[4]
-    x0 = params[5]
-    r = params[6]
-    
+    mu = params[0]
+    kappa = params[1]
+    theta = params[2]
+    sigma = params[3]
+    rho = params[4]
+    v0 = params[5]
+    x0 = np.log(S0)
     # init values
     def heston_transition(x):
         x_next = np.matrix([0,0], dtype=np.float64).T
-        x_next[0,0] = x[0,0] + (r-1/2*x[1,0])*dt
+        x_next[0,0] = x[0,0] + (mu-1/2*x[1,0])*dt
         x_next[1,0] = x[1,0] + kappa*(theta-x[1,0])*dt
         return x_next
 
@@ -113,7 +115,7 @@ def ekf_heston(y, # list observations
     F = np.matrix([[1, -1/2*dt],
                   [0, 1-kappa*dt]])
     U = np.matrix([[np.sqrt(v0*dt), 0],
-                  [0, lda*np.sqrt(v0*dt)]])
+                  [0, sigma*np.sqrt(v0*dt)]])
     Q = np.matrix([[1, rho],
                   [rho, 1]])
     H = np.matrix([[1,0]])
@@ -128,7 +130,7 @@ def ekf_heston(y, # list observations
         P_pred = F*P*F.T + U*Q*U.T
         A = H*P_pred*H.T # only have state transition f
         delta = y[i] - x_pred[0,i]
-        obj += np.log(abs(A)) + delta**2/A
+        obj += np.log(abs(A[0,0])) + delta[0,0]**2/A[0,0]
 
         # measurement update
         K = P*H.T/A
@@ -136,6 +138,7 @@ def ekf_heston(y, # list observations
         x_update[1,i] = max(1e-5, x_update[1,i]) # ensure vol. is non-neg
         vk = x_update[1,i]
         U = np.matrix([[np.sqrt(vk*dt), 0],
-                       [0, lda*np.sqrt(vk*dt)]])
+                        [0, sigma*np.sqrt(vk*dt)]])
         P = (I-K*H)*P_pred
-    return obj if return_obj else x_pred
+    return obj
+
