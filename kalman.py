@@ -59,9 +59,8 @@ def obj(f, y, args=None):
     """Wrapper for fmin to allow passing target y to obj. function"""
     def fix_y(params):
         if args is not None:
-            S0 = args[0]
-            r = args[1]
-            return f(y, params, S0, r)
+            S0 = args
+            return f(y, params, S0)
         return f(y, params)
     return fix_y
 
@@ -94,21 +93,20 @@ def kalman_path(y, params, N=1000, return_filter=False):
 def ekf_heston_obj(y, # list observations
                    params, # list params
                    S0, # float init price
-                   r, # float discount
                    N = 1000, # int total timestep
-                   dt=1/250, # float J step size, default daily
-                   return_obj=False
+                   dt=1/250 # float J step size, default daily
               ):
-    kappa = params[0]
-    theta = params[1]
-    sigma = params[2]
-    rho = params[3]
-    v0 = params[4]
+    mu = params[0]
+    kappa = params[1]
+    theta = params[2]
+    sigma = params[3]
+    rho = params[4]
+    v0 = params[5]
     x0 = np.log(S0)
     # init values
     def heston_transition(x):
         x_next = np.matrix([0,0], dtype=np.float64).T
-        x_next[0,0] = x[0,0] + (r-1/2*x[1,0])*dt
+        x_next[0,0] = x[0,0] + (mu-1/2*x[1,0])*dt
         x_next[1,0] = x[1,0] + kappa*(theta-x[1,0])*dt
         return x_next
 
@@ -143,3 +141,4 @@ def ekf_heston_obj(y, # list observations
                         [0, sigma*np.sqrt(vk*dt)]])
         P = (I-K*H)*P_pred
     return obj
+
