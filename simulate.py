@@ -30,3 +30,26 @@ def simulate_heston(params, S0, r, q, T, N=1000, eps=1e-8):
         log_Ss = log_St
         vs = vt
     return all_logS
+
+def simulate_heston_state(params, # list params
+                          S0, # float init price
+                          N = 1000, # total num steps
+                          dt = 1/250 # float step size, default daily
+                         ):
+    mu = params[0]
+    kappa = params[1]
+    theta = params[2]
+    sigma = params[3]
+    rho = params[4]
+    v0 = params[5]
+    Q = np.matrix([[1, rho],
+                   [rho, 1]])
+    y = np.matrix(np.zeros((2, N+1)))
+    y[0,0] = np.log(S0)
+    y[1,0] = v0
+    for i in range(1, N+1):
+        z1, z2 = np.random.multivariate_normal([0,0], Q)
+        v = max(y[1,i-1], 0)
+        y[0, i] = y[0, i-1] + (mu-1/2*v)*dt + np.sqrt(v*dt)*z1
+        y[1, i] = y[1, i-1] + kappa*(theta-v)*dt + sigma*np.sqrt(v*dt)*z2
+    return y
