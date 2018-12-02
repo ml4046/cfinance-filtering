@@ -142,3 +142,128 @@ def ekf_heston_obj(y, # list observations
         P = (I-K*H)*P_pred
     return obj
 
+# def is_pos_def(A):
+    # return np.all(np.linalg.eigvals(A) > 0)
+def is_pos_def(A):
+    if np.array_equal(A, A.T):
+        try:
+            np.linalg.cholesky(A)
+            return True
+        except np.linalg.LinAlgError:
+            return False
+    return False
+
+def ukf_heston_obj(y, # list observations
+                   params, # list params
+                   S0, # float init price
+                   N=1000, # in total timestep
+                   dt=1/250 # float stepsize, default daily
+                  ):
+    mu = params[0]
+    kappa = params[1]
+    theta = params[2]
+    sigma = max(1e-3, params[3])
+    rho = params[4]
+    v0 = max(1e-3, params[5]) # ensure positive vt
+    y0 = np.log(S0)
+    y_hat = y0
+    # initialize params
+    Ew = 0 # expectation of system (gaussian) noise is 0
+    Ev = 0 # expectation of measurement (observables)
+    P = 1e-5 # P0 covariance is 0
+    F = 1 - kappa*dt + 1/2*rho*sigma*dt
+    H = -1/2*dt
+
+    # init state variables
+    x_pred = 0
+    x_update = v0
+    x_pred_vals = np.zeros(N+1)
+    x_update_vals = np.zeros(N+1)
+    x_update_vals[0] = x_update
+    y_hat_vals = np.zeros(N+1) # predicted price
+
+    # init sigma points and weight updates params
+    L = 2
+    K = 0
+    alpha = 1e-3
+    beta = 1.5
+    # TODO: weighting schemes
+    # lda = alpha**2*(L+K) - L
+    lda = 3 - L
+    x_sig = np.matrix(np.zeros((L,2*L+1)))
+    W_m = np.zeros(2*L+1)
+    W_c = np.zeros(2*L+1)
+    W_m[0] = lda/(L+lda)
+    W_c[0] = lda/(L+lda) # + (1-alpha**2+beta)
+    W_m[1:] = 1/(2*(L+lda))
+    W_c[1:] = 1/(2*(L+lda))
+
+    obj = 0
+    for i in range(1, len(y)):
+        # init augmentation process
+        x_aug = np.matrix([x_update, Ew]).T
+        Q = lda**2*(1-rho**2)*x_update*dt
+        P_aug = np.matrix([[P, 0],
+                           [0, Q]])
+        
+        # make P positive definite
+        # replace negative values in diagonal with small constant
+        # while not is_pos_def(P_aug):
+        #    P_aug = P_aug + eps * np.eye(P_aug.shape[0])
+        diag = P_aug[np.diag_indices(P_aug.shape[0])][0]
+        diag[diag<0] = 1e-3
+        P_aug = np.matrix(np.eye(P_aug.shape[0]) * np.array(diag)[0])
+        u_state = kappa*theta*dt - lda*rho*mu*dt + lda*rho*(y[i]-y[i-1])
+        
+        # generating sigma points
+        # note P_aug is diagonal
+        rP_aug = np.sqrt(L+lda) * np.sqrt(P_aug)
+        x_sig[:, 0] = x_aug
+        for k in range(1, L+1):
+            x_sig[:, k] = x_aug + rP_aug[:, k-1]
+            x_sig[:,L+k] = x_aug - rP_aug[:, k-1]
+
+        # map sigma point through process transition
+        F_x_sig = np.array(x_sig[0,:])[0]
+        w = np.sqrt(Q) * x_aug[1,0] # is zero since expectation E[w] is 0
+        F_x_sig = F * F_x_sig + u_state + w
+        
+        # get predicted state and cov from mapped sig points
+        R = x_update * dt
+        x_pred = np.sum(W_m * F_x_sig)
+        P_pred = np.sum(W_c * (F_x_sig - x_pred)**2) + Q
+        x_pred_aug = np.matrix([x_pred, Ev]).T
+        P_pred_aug = np.matrix([[P_pred, 0],
+                               [0, R]])
+
+        # while not is_pos_def(P_pred_aug):
+        #     P_pred_aug = p_pred_aug + eps * np.eye(P_pred_aug.shape[0])
+        diag = P_pred_aug[np.diag_indices(P_pred_aug.shape[0])]
+        diag[diag<0] = 1e-3
+        P_pred_aug = np.matrix(np.eye(P_pred_aug.shape[0]) * np.array(diag)[0])
+        rP_pred_aug = np.sqrt(L+lda) * np.sqrt(P_pred_aug)
+        u_obs = y[i-1] + mu*dt # use model predicted y instead?
+        x_sig[:, 0] = x_pred_aug
+
+        for k in range(1, L+1):
+            x_sig[:, k] = x_pred_aug + rP_pred_aug[:, k-1]
+            x_sig[:, L+k] = x_pred_aug + rP_pred_aug[:, k-1]
+        H_x_sig = np.array(x_sig[0,:])[0]
+        v = np.sqrt(R) * x_pred_aug[1,0] # is zero since mean of obs noise is 0
+        H_x_sig = H * H_x_sig + u_obs + v
+        y_hat = np.sum(W_m * H_x_sig)
+
+        # measurement update
+        Pyy = np.sum(W_c*(H_x_sig - y_hat)**2) + R
+        Pxy = np.sum(W_c*((np.array(x_sig[0,:])[0]-x_pred)*(H_x_sig-y_hat)))
+        K = Pxy/Pyy
+        x_update = max(1e-3, x_pred + K*(y[i]-y_hat)) # ensure positive vol
+        P = P - K*Pyy*K
+        
+        # likelihood
+        # TODO: check if correct
+        delta = y[i] - y_hat
+        A = Pyy # don't need H to retrieve entries and R already added
+        obj += np.log(np.fabs(A)) + delta**2/A
+        # print(obj)
+    return obj
