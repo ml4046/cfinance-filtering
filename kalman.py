@@ -124,20 +124,49 @@ def ekf_heston_obj(y, # list observations
     x_update[0,0] = x0
     x_update[1,0] = v0
     obj = 0
-    for i in range(1, N+1):
-        x_pred[:, i] = heston_transition(x_update[:,i-1])
+    
+    #wrapper function
+    def ekf_predict(x_pred, yk, i, F, P, U, Q):
+        '''
+        time prediciton function of ekf
+        '''
         P_pred = F*P*F.T + U*Q*U.T
-        A = H*P_pred*H.T # only have state transition f
-        delta = y[i] - x_pred[0,i]
-        obj += np.log(abs(A[0,0])) + delta[0,0]**2/A[0,0]
-
-        # measurement update
+        A = H*P_pred*H.T
+        delta = yk - x_pred[0,i]        
+        
+        return x_pred, P_pred, A, delta
+    
+    def ekf_update(x_update,x_predk, i, A, delta, H, P_pred, P):
+        '''
+        measurement update function of ekf
+        '''
+         # only have state transition f
         K = P*H.T/A
-        x_update[:,i] = x_pred[:,i] + K*delta
+        x_update[:,i] = x_predk + K*delta
         x_update[1,i] = max(1e-5, x_update[1,i]) # ensure vol. is non-neg
         vk = x_update[1,i]
         U = np.matrix([[np.sqrt(vk*dt), 0],
                         [0, sigma*np.sqrt(vk*dt)]])
         P = (I-K*H)*P_pred
+        
+        return P, U, x_update
+        
+    for i in range(1, N+1):
+        x_pred[:, i] = heston_transition(x_update[:,i-1])
+        x_pred, P_pred, A, delta = ekf_predict(x_pred, y[i], i, F, P, U, Q)
+        #P_pred = F*P*F.T + U*Q*U.T
+        #A = H*P_pred*H.T # only have state transition f
+        #delta = y[i] - x_pred[0,i]
+        obj += np.log(abs(A[0,0])) + delta[0,0]**2/A[0,0]
+
+        # measurement update
+        P, U, x_update = ekf_update(x_update, x_pred[:, i], i, A, delta, H, P_pred, P)
+        #K = P*H.T/A
+        #x_update[:,i] = x_pred[:,i] + K*delta
+        #x_update[1,i] = max(1e-5, x_update[1,i]) # ensure vol. is non-neg
+        #vk = x_update[1,i]
+#         U = np.matrix([[np.sqrt(vk*dt), 0],
+#                         [0, sigma*np.sqrt(vk*dt)]])
+        #P = (I-K*H)*P_pred
     return obj
 
