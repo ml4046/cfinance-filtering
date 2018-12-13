@@ -101,8 +101,9 @@ def ekf_heston_obj(y, # list observations
     theta = params[2]
     sigma = params[3]
     rho = params[4]
-    v0 = params[5]
+    v0 = max(1e-3, params[5])
     x0 = np.log(S0)
+    N = len(y)
     # init values
     def heston_transition(x):
         x_next = np.matrix([0,0], dtype=np.float64).T
@@ -110,37 +111,36 @@ def ekf_heston_obj(y, # list observations
         x_next[1,0] = x[1,0] + kappa*(theta-x[1,0])*dt
         return x_next
 
-    x_pred = np.matrix(np.zeros((2, N+1)))
-    x_update = np.matrix(np.zeros((2, N+1)))
+    x_update = np.matrix([x0, v0]).T
     F = np.matrix([[1, -1/2*dt],
                   [0, 1-kappa*dt]])
     U = np.matrix([[np.sqrt(v0*dt), 0],
                   [0, sigma*np.sqrt(v0*dt)]])
     Q = np.matrix([[1, rho],
                   [rho, 1]])
-    H = np.matrix([[1,0]])
-    P = np.matrix([[np.sqrt(v0*dt), 0],
-                  [0, np.sqrt(v0*dt)]])
+    H = np.matrix([1,0])
+    P = np.matrix([[1e-2, 0],
+                  [0, 1e-2]])
     I = np.identity(2)
-    x_update[0,0] = x0
-    x_update[1,0] = v0
     obj = 0
-    for i in range(1, N+1):
-        x_pred[:, i] = heston_transition(x_update[:,i-1])
+    for i in range(1, N):
+        x_pred = heston_transition(x_update)
         P_pred = F*P*F.T + U*Q*U.T
         A = H*P_pred*H.T # only have state transition f
-        delta = y[i] - x_pred[0,i]
-        obj += np.log(abs(A[0,0])) + delta[0,0]**2/A[0,0]
+        A = A[0,0]
+        delta = y[i] - x_pred[0,0]
+        delta = delta[0,0]
+        obj += np.log(abs(A)) + delta**2/A
 
         # measurement update
-        K = P*H.T/A
-        x_update[:,i] = x_pred[:,i] + K*delta
-        x_update[1,i] = max(1e-5, x_update[1,i]) # ensure vol. is non-neg
-        vk = x_update[1,i]
+        K = P_pred*H.T/A
+        x_update = x_pred + K*delta
+        x_update[1,0] = max(1e-5, x_update[1,0]) # ensure vol. is non-neg
+        vk = x_update[1,0]
         U = np.matrix([[np.sqrt(vk*dt), 0],
                         [0, sigma*np.sqrt(vk*dt)]])
         P = (I-K*H)*P_pred
-    return obj
+    return obj/N
 
 # def is_pos_def(A):
     # return np.all(np.linalg.eigvals(A) > 0)
