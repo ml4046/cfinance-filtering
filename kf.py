@@ -24,7 +24,7 @@ class EKFHeston(object):
         obj = 0
         for i in range(1, N):
             # time update
-            x_pred, P_pred = self._time_update(self.y[i], params, x_update, F, H, 
+            x_pred, P_pred = self._time_update(params, x_update, F, H, 
                                                P_update, U, Q)
             A = H*P_pred*H.T
             A = A[0,0]
@@ -36,6 +36,28 @@ class EKFHeston(object):
                                                           H, A, delta, I)
         return obj/N
     
+    def filter(self, y, params):
+        x_update, F, U, Q, H, P_update, I = self._init_transition(params)
+        N = len(y)
+        observations = np.zeros(N)
+        hidden = np.zeros(N)
+        for i in range(1, N):
+            # time update
+            x_pred, P_pred = self._time_update(params, x_update, F, H, 
+                                               P_update, U, Q)
+            A = H*P_pred*H.T
+            A = A[0,0]
+            # calc. error
+            delta = y[i] - x_pred[0,0]
+            
+            # measurement update
+            x_update, P_update = self._measurement_update(params, x_pred, P_pred, 
+                                                          H, A, delta, I)
+            observations[i] = x_update[0,0]
+            hidden[i] = x_update[1,0]
+        return observations[1:], hidden[1:]
+    
+    # TODO: allow different optimizers
     def optimize(self, init_params, maxiter=10000):
         """
         Performs simplex optimization for parameter estimation
@@ -50,11 +72,10 @@ class EKFHeston(object):
             
         xopt, fopt, _, _, _ = fmin(self.obj, init_params, 
                                    maxiter=maxiter, callback=callbackF, 
-                                   disp=True, retall=False, full_output=True)        
-        
-        
-        
-    def _time_update(self, y, params, x, F, H, P, U, Q):
+                                   disp=True, retall=False, full_output=True)
+        return xopt
+    
+    def _time_update(self, params, x, F, H, P, U, Q):
         x_pred = self.observation_transition(x, params)
         P_pred = F*P*F.T + U*Q*U.T
         return x_pred, P_pred
