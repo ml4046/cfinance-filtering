@@ -113,11 +113,25 @@ class EKFHeston(object):
         return x_update, F, U, Q, H, P_update, I
     
     def _unwrap_params(self, params):
-        mu = params[0]
-        kappa = params[1]
-        theta = params[2]
-        sigma = params[3]
-        rho = params[4]
-        v0 = max(1e-3, params[5])
+        def periodic_map(x, c, d):
+            """
+            Periodic Param mapping provided by Prof. Hirsa
+            """
+            if ((x>=c) & (x<=d)):
+                y = x
+            else:
+                range = d-c
+                n = np.floor((x-c)/range)
+                if (n%2 == 0):
+                    y = x - n*range;
+                else:
+                    y = d + n*range - (x-c)
+            return y
+        mu = periodic_map(params[0], 0.01, 1)
+        kappa = periodic_map(params[1], 1, 3)
+        theta = periodic_map(params[2], 0.001, 0.2)
+        sigma = periodic_map(params[3], 1e-3, 0.7)
+        rho = periodic_map(params[4], -1, 1)
+        v0 = periodic_map(params[5], 1e-3, 0.2) # ensure positive vt
         return mu, kappa, theta, sigma, rho, v0
     
