@@ -27,7 +27,7 @@ class PFHeston(object):
         # initialize weights and particles
         dy = y[1]-y[0]
         particles = np.maximum(1e-3, self.proposal_sample(self.N, v, dy, params))
-        # particles = np.maximum(1e-3, norm.rvs(0, 1, self.N) * np.sqrt(self.dt) + x_pred)
+        # particles = np.maximum(1e-3, norm.rvs(0, 1, self.N) * sigma*np.sqrt(x_pred*(1-rho**2)*self.dt) + x_pred)
         weights = np.array([1/self.N] * self.N)
         for i in range(1, len(y)):
             dy = y[i] - y[i-1]
@@ -38,15 +38,13 @@ class PFHeston(object):
             x_pred = np.maximum(1e-3, x_pred)
 
     		# SIR (update)
-            l = self.likelihood(y[i], x_pred, particles, y[i-1], params)
-            t = self.transition(x_pred, particles, params)
-            p = self.proposal(x_pred, particles, dy, params)
-
-            weights = weights * l*t/p
+            weights = weights * self.likelihood(y[i], x_pred, particles, y[i-1], params)*\
+                        self.transition(x_pred, particles, params)/\
+                        self.proposal(x_pred, particles, dy, params)
             weights = weights/sum(weights)
 
             # Resampling
-            if self._neff(weights) < 5/6*self.N:
+            if self._neff(weights) < 3/5*self.N:
                 print('resampling since: {}'.format(self._neff(weights)))
                 x_pred, weights = self._simple_resample(x_pred, weights)
 
@@ -60,7 +58,7 @@ class PFHeston(object):
             particles = x_pred
             observations[i] = y_hat
             hidden[i] = v
-            print(i)
+            print('done with step: {}'.format(i))
         return observations, hidden
 
 
