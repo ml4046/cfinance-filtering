@@ -1,5 +1,6 @@
 import numpy as np
 from scipy.optimize import fmin
+from scipy.stats import norm
 
 def generate_kalman_example(params, N=1000):
     """Generate example for KF"""
@@ -275,7 +276,7 @@ def ukf_heston_obj(y, # list observations
             x_sig[:, L+k] = x_pred_aug + rP_pred_aug[:, k-1]
         H_x_sig = np.array(x_sig[0,:])[0]
         v = np.sqrt(R) * x_pred_aug[1,0]
-        H_x_sig = H * H_x_sig + u_obs + np.sqrt(R)*np.array(x_sig[1,:])[0]
+        H_x_sig = H * H_x_sig + u_obs + np.sqrt(R)* np.array(x_sig[1,:])[0]
         y_hat = np.sum(W_m * H_x_sig)
 
         # measurement update
