@@ -1,5 +1,5 @@
-# Filtering for Heston and Variance Gamma Stochastic Arrival (VGSA) Process
-Applications of various Kalman Filters and Particle Filter (sequential Monte Carlo method) on stochastic processes such as Heston and VGSA
+# Filtering for Heston and VGSA Process
+Applications of various Kalman Filters and Particle Filter (sequential Monte Carlo method) on stochastic processes such as Heston and Variance Gamma Stochastic Arrival (VGSA)
 
 # Setup
 We suggest setting up a virtual environment to run the provided codes:
