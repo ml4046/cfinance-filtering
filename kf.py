@@ -2,9 +2,9 @@ import numpy as np
 from scipy.optimize import fmin
 
 class EKFHeston(object):
-    def __init__(self, y, dt=1/250):
+    def __init__(self, y, dt=1/250, is_log=False):
         self.y = y # observations
-        self.logS0 = np.log(y[0])
+        self.logS0 = np.log(y[0]) if not is_log else y[0]
         self.dt = dt # default to daily
               
     def observation_transition(self, x, params):
@@ -112,6 +112,223 @@ class EKFHeston(object):
         I = np.identity(2)
         return x_update, F, U, Q, H, P_update, I
     
+    def _unwrap_params(self, params):
+        def periodic_map(x, c, d):
+            """
+            Periodic Param mapping provided by Prof. Hirsa
+            """
+            if ((x>=c) & (x<=d)):
+                y = x
+            else:
+                range = d-c
+                n = np.floor((x-c)/range)
+                if (n%2 == 0):
+                    y = x - n*range;
+                else:
+                    y = d + n*range - (x-c)
+            return y
+        mu = periodic_map(params[0], 0.01, 1)
+        kappa = periodic_map(params[1], 1, 3)
+        theta = periodic_map(params[2], 0.001, 0.2)
+        sigma = periodic_map(params[3], 1e-3, 0.7)
+        rho = periodic_map(params[4], -1, 1)
+        v0 = periodic_map(params[5], 1e-3, 0.2) # ensure positive vt
+        return mu, kappa, theta, sigma, rho, v0
+
+class UKFHeston(object):
+    def __init__(self, y, dt=1/250, is_log=False):
+        self.y = y
+        self.logS0 = np.log(y[0]) if not is_log else y[0]
+        self.dt = dt
+
+
+    def obj(self, params):
+        mu, kappa, theta, sigma, rho, v0 = self._unwrap_params(params)
+        y_hat = self.logS0
+        N = len(self.y)
+        Ew, Ev, P, F, H = self._init_transitions(params)
+        x_update = v0
+
+        # init sigma points and weight updates params
+        L = 2 # heston has two states
+        K = 0
+        alpha = 1e-3
+        beta = 2
+        x_sig, lda, W_m, W_c = self._init_weights(params, L, K, alpha, beta)
+
+        obj = 0 # constant for making matrix Semi Pos. Def
+        eps = 1e-6
+        for i in range(1, N):
+            # prediction
+            dy = self.y[i] - self.y[i-1]
+            F_x_sig, H_x_sig, x_pred, P_pred, y_hat = self._time_update(params, x_update, x_sig, W_m, W_c, F, H, self.y[i], dy, P, Ew, Ev, L, lda)
+
+            # measurement update
+            R = x_pred * self.dt
+            x_update, P, Pyy = self._measurement_update(F_x_sig, H_x_sig, W_c, x_pred, P_pred, self.y[i], y_hat, R)
+            
+            # likelihood
+            # TODO: check if correct
+            delta = self.y[i] - y_hat
+            A = Pyy # don't need H to retrieve entries and R already added
+            obj += np.log(np.fabs(A)) + delta**2/A
+        return obj
+
+    def optimize(self, init_params, maxiter=10000):
+        """
+        Performs simplex optimization for parameter estimation
+        """
+        mu, kappa, theta, sigma, rho, v0 = self._unwrap_params(init_params)
+        print([mu, kappa, theta, sigma, rho, v0])
+        self.num_iter = 1
+        def callbackF(xi):
+            global arg
+            print('i: ' + str(self.num_iter))
+            print('x_i: ' + str(xi))
+            print('f_i: ' + str(self.obj(xi)))
+            self.num_iter += 1
+            
+        xopt, fopt, _, _, _ = fmin(self.obj, init_params, 
+                                   maxiter=maxiter, callback=callbackF, 
+                                   disp=True, retall=False, full_output=True)
+        return xopt
+
+    def filter(self, y, params):
+        mu, kappa, theta, sigma, rho, v0 = self._unwrap_params(params)
+        y_hat = self.logS0
+        N = len(y)
+        # initialize transitions
+        Ew, Ev, P, F, H = self._init_transitions(params)
+
+        # init state variables
+        x_update = v0
+        x_pred_vals = np.zeros(N)
+        x_pred_vals[0] = x_update
+        y_hat_vals = np.zeros(N) # predicted price
+        y_hat_vals[0] = y_hat
+
+        # init sigma points and weight updates params
+        L = 2 # heston has two states
+        K = 0
+        alpha = 1e-3
+        beta = 2
+        x_sig, lda, W_m, W_c = self._init_weights(params, L, K, alpha, beta)
+
+        eps = 1e-6 # constant for making matrix Semi Pos. Def
+        for i in range(1, N):
+            # prediction
+            dy = y[i] - y[i-1]
+            F_x_sig, H_x_sig, x_pred, P_pred, y_hat = self._time_update(params, x_update, x_sig, W_m, W_c, F, H, y[i], dy, P, Ew, Ev, L, lda)
+
+            # measurement update
+            R = x_pred * self.dt
+            x_update, P, _ = self._measurement_update(F_x_sig, H_x_sig, W_c, x_pred, P_pred, y[i], y_hat, R)
+            
+            # append results
+            x_pred_vals[i] = x_update
+            y_hat_vals[i] = y_hat
+        return x_pred_vals, y_hat_vals
+
+    def _time_update(self, params, x_update, x_sig, W_m, W_c, F, H, y_prev, dy, P, Ew, Ev, L, lda):
+        mu, kappa, theta, sigma, rho, v0 = self._unwrap_params(params)
+        # init augmentation
+        Q = sigma**2*(1-rho**2)*x_update*self.dt
+        x_aug, P_aug = self._aug_state(params, x_update, Ew, P, Q)
+
+        # make P positive definite
+        # replace negative values in diagonal with small constant
+        while not self._is_pos_def(P_aug):
+            P_aug = P_aug + eps * np.eye(P_aug.shape[0])
+        u_state = kappa*theta*self.dt - sigma*rho*mu*self.dt + sigma*rho*(dy)
+
+        # generating sigma points
+        # note P_aug is diagonal
+        x_sig, rP_aug = self._generate_sigmas(x_aug, x_sig, P_aug, L, lda)
+
+        # map sigma point through process transition and map points
+        F_x_sig = self._transition(x_sig, u_state, F, Q)
+        x_pred = max(1e-3, np.sum(W_m * F_x_sig))
+        P_pred = np.sum(W_c * (F_x_sig - x_pred)**2) + Q
+
+        # observations
+        R = x_pred * self.dt
+        x_pred_aug, P_pred_aug = self._aug_state(params, x_pred, Ev, P_pred, R)
+
+        while not self._is_pos_def(P_pred_aug):
+            P_pred_aug = P_pred_aug + eps * np.eye(P_pred_aug.shape[0])
+        u_obs = y_prev + mu*self.dt
+        
+        x_sig, rP_pred_aug = self._generate_sigmas(x_pred_aug, x_sig, P_pred_aug, L, lda)
+        H_x_sig = self._transition(x_sig, u_obs, H, R)
+        y_hat = np.sum(W_m * H_x_sig)
+
+        return F_x_sig, H_x_sig, x_pred, P_pred, y_hat
+
+    def _measurement_update(self, F_sig, H_sig, W_c, x_pred, P_pred, y, y_hat, R):
+        Pyy = np.sum(W_c*(H_sig-y_hat)**2) + R
+        Pxy = np.sum(W_c*(F_sig-x_pred)*(H_sig-y_hat))
+        K = Pxy/Pyy
+        x_update = max(1e-3, x_pred + K*(y-y_hat))
+        P = P_pred - K*Pyy*K
+        return x_update, P, Pyy
+
+    def _init_transitions(self, params):
+        mu, kappa, theta, sigma, rho, v0 = self._unwrap_params(params)
+        Ew = 0 # expectation of system (gaussian) noise is 0
+        Ev = 0 # expectation of measurement (observables)
+        P = 1e-5 # P0 covariance is 0
+        F = 1 - kappa*self.dt + 1/2*rho*sigma*self.dt
+        H = -1/2*self.dt
+        return Ew, Ev, P, F, H
+
+    def _init_weights(self, params, L, K, alpha=1e-3, beta=2):
+        """
+        Unscented weights initialization
+        """
+        lda = alpha**2*(L+K) - L
+        x_sig = np.matrix(np.zeros((L,2*L+1)))
+        W_m = np.zeros(2*L+1)
+        W_c = np.zeros(2*L+1)
+        W_m[0] = lda/(L+lda)
+        W_c[0] = lda/(L+lda) + (1-alpha**2+beta)
+        W_m[1:] = 1/(2*(L+lda))
+        W_c[1:] = 1/(2*(L+lda))
+        return x_sig, lda, W_m, W_c
+
+    def _aug_state(self, params, x, expectation, cov_mat, noise_cov):
+        mu, kappa, theta, sigma, rho, v0 = self._unwrap_params(params)
+        x_aug = np.matrix([x, expectation]).T
+        P_aug = np.matrix([[cov_mat, 0],
+                           [0, noise_cov]])
+        return x_aug, P_aug
+
+    def _generate_sigmas(self, x, sigmas, aug_mat, L, lda):
+        # generating sigma points
+        # note P_aug is diagonal
+        r_aug_mat = np.sqrt(L+lda) * np.sqrt(aug_mat)
+        sigmas[:, 0] = x # set center
+        for k in range(1, L+1):
+            sigmas[:, k] = x + r_aug_mat[:, k-1]
+            sigmas[:,L+k] = x - r_aug_mat[:, k-1]
+        return sigmas, r_aug_mat
+
+    def _transition(self, sigmas, u, transition_mat, noise_cov):
+        """
+        Transition sigma points with given transition matrix
+        """
+        mapped_sig = np.array(sigmas[0, :])[0]
+        mapped_sig = transition_mat * mapped_sig + u + np.sqrt(noise_cov)*np.array(sigmas[1,:])[0]
+        return mapped_sig
+
+    def _is_pos_def(self, A):
+        if np.array_equal(A, A.T):
+            try:
+                np.linalg.cholesky(A)
+                return True
+            except np.linalg.LinAlgError:
+                return False
+        return False
+
     def _unwrap_params(self, params):
         def periodic_map(x, c, d):
             """
