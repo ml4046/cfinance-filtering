@@ -1,3 +1,8 @@
+"""
+NOTE: This is deprecated, see kf.py
+"""
+
+
 import numpy as np
 from scipy.optimize import fmin
 from scipy.stats import norm
