@@ -1,6 +1,6 @@
 import numpy as np
-
 from scipy.optimize import fmin
+from scipy.stats import norm
 
 def generate_kalman_example(params, N=1000):
     """Generate example for KF"""
@@ -153,6 +153,21 @@ def is_pos_def(A):
             return False
     return False
 
+def periodic_map(x, c, d):
+    """
+    Periodic Param mapping provided by Prof. Hirsa
+    """
+    if ((x>=c) & (x<=d)):
+        y = x
+    else:
+        range = d-c
+        n = np.floor((x-c)/range)
+        if (n%2 == 0):
+            y = x - n*range;
+        else:
+            y = d + n*range - (x-c)
+    return y
+
 def ukf_heston_obj(y, # list observations
                    params, # list params
                    S0, # float init price
@@ -160,12 +175,16 @@ def ukf_heston_obj(y, # list observations
                    dt=1/250, # float stepsize, default daily
                    return_vals=False
                   ):
-    mu = params[0]
-    kappa = params[1]
-    theta = params[2]
-    sigma = max(1e-3, params[3])
-    rho = min(0, max(-1, params[4]))
-    v0 = max(1e-3, params[5]) # ensure positive vt
+    
+    mu = periodic_map(params[0], 0.01, 1)
+    kappa = periodic_map(params[1], 1, 3)
+    theta = periodic_map(params[2], 0.001, 0.2)
+    sigma = periodic_map(params[3], 1e-3, 0.7)
+    rho = periodic_map(params[4], -1, 1)
+    v0 = periodic_map(params[5], 0.01, 0.2) # ensure positive vt
+    
+    print([mu, kappa, theta, sigma, rho, v0])
+    
     y0 = np.log(S0)
     y_hat = y0
     N = len(y)
@@ -201,6 +220,7 @@ def ukf_heston_obj(y, # list observations
     W_c[1:] = 1/(2*(L+lda))
 
     obj = 0
+    eps = 1e-3
     for i in range(1, N):
         # init augmentation process
         x_aug = np.matrix([x_update, Ew]).T
@@ -210,11 +230,13 @@ def ukf_heston_obj(y, # list observations
         
         # make P positive definite
         # replace negative values in diagonal with small constant
-        # while not is_pos_def(P_aug):
-        #    P_aug = P_aug + eps * np.eye(P_aug.shape[0])
-        diag = P_aug[np.diag_indices(P_aug.shape[0])][0]
-        diag[diag<0] = 1e-3
-        P_aug = np.matrix(np.eye(P_aug.shape[0]) * np.array(diag)[0])
+        while not is_pos_def(P_aug):
+            P_aug = P_aug + eps * np.eye(P_aug.shape[0])
+           
+        #diag = P_aug[np.diag_indices(P_aug.shape[0])][0]
+        #diag[diag<0] = 1e-3
+        #P_aug = np.matrix(np.eye(P_aug.shape[0]) * np.array(diag)[0])
+        
         u_state = kappa*theta*dt - sigma*rho*mu*dt + sigma*rho*(y[i]-y[i-1])
         
         # generating sigma points
@@ -227,7 +249,7 @@ def ukf_heston_obj(y, # list observations
 
         # map sigma point through process transition
         F_x_sig = np.array(x_sig[0,:])[0]
-        w = np.sqrt(Q) * x_aug[1,0] # is zero since expectation E[w] is 0
+        w = np.sqrt(Q) * x_aug[1,0]
         F_x_sig = F * F_x_sig + u_state + np.sqrt(Q)*np.array(x_sig[1,:])[0]
 
         # get predicted state and cov from mapped sig points
@@ -238,11 +260,13 @@ def ukf_heston_obj(y, # list observations
         P_pred_aug = np.matrix([[P_pred, 0],
                                 [0, R]])
 
-        # while not is_pos_def(P_pred_aug):
-        #     P_pred_aug = p_pred_aug + eps * np.eye(P_pred_aug.shape[0])
-        diag = P_pred_aug[np.diag_indices(P_pred_aug.shape[0])]
-        diag[diag<0] = 1e-3
-        P_pred_aug = np.matrix(np.eye(P_pred_aug.shape[0]) * np.array(diag)[0])
+        while not is_pos_def(P_pred_aug):
+            P_pred_aug = P_pred_aug + eps * np.eye(P_pred_aug.shape[0])
+            
+        #diag = P_pred_aug[np.diag_indices(P_pred_aug.shape[0])]
+        #diag[diag<0] = 1e-3
+        #P_pred_aug = np.matrix(np.eye(P_pred_aug.shape[0]) * np.array(diag)[0])
+        
         rP_pred_aug = np.sqrt(L+lda) * np.sqrt(P_pred_aug)
         u_obs = y[i-1] + mu*dt # use model predicted y instead?
         x_sig[:, 0] = x_pred_aug
@@ -251,8 +275,8 @@ def ukf_heston_obj(y, # list observations
             x_sig[:, k] = x_pred_aug + rP_pred_aug[:, k-1]
             x_sig[:, L+k] = x_pred_aug + rP_pred_aug[:, k-1]
         H_x_sig = np.array(x_sig[0,:])[0]
-        v = np.sqrt(R) * x_pred_aug[1,0] # is zero since mean of obs noise is 0
-        H_x_sig = H * H_x_sig + u_obs + np.sqrt(R)*np.array(x_sig[1,:])[0]
+        v = np.sqrt(R) * x_pred_aug[1,0]
+        H_x_sig = H * H_x_sig + u_obs + np.sqrt(R)* np.array(x_sig[1,:])[0]
         y_hat = np.sum(W_m * H_x_sig)
 
         # measurement update
