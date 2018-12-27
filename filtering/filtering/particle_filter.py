@@ -12,7 +12,7 @@ class PFHeston(object):
         self.dt = dt
 
 
-    # deprecated: use obj
+    # deprecated: use filter
     def filter_(self, y, params):
         """
         Performs sequential monte-carlo sampling particle filtering
@@ -20,7 +20,6 @@ class PFHeston(object):
         mu, kappa, theta, sigma, rho, v0 = self._unwrap_params(params)
         x_pred = np.array([v0] * self.N)
         v = v0
-
         observations = np.zeros(len(y))
         hidden = np.zeros(len(y))
         observations[0] = y[0]
@@ -40,7 +39,7 @@ class PFHeston(object):
             # TODO: resample neg. vols
             x_pred = np.maximum(1e-3, x_pred)
 
-    		# SIR (update)
+            # SIR (update)
             weights = weights * self.likelihood(y[i], x_pred, particles, y[i-1], params)*\
                         self.transition(x_pred, particles, params)/\
                         self.proposal(x_pred, particles, dy, params)
@@ -66,148 +65,106 @@ class PFHeston(object):
             print('done with step: {}'.format(i))
         return observations, hidden
 
-    def obj(self, params):
+    def filter(self, params, is_bounds=True, simple_resample=False):
         """
         Performs sequential monte-carlo sampling particle filtering
         """
-        mu, kappa, theta, sigma, rho, v0 = self._unwrap_params(params)
         y = self.y
         N = self.N
+
+        if not is_bounds: # params is an array of param values, not particles
+            mu, kappa, theta, sigma, rho, v0 = self._unwrap_params(params)
+        else:
+            # initialize param states, N particles for each param sampled uniformly
+            v0 = params[-1] # params is shape [(lb, ub)_1,...,k, v0]
+            params_states = self._init_parameter_states(len(params), N, params[:-1])
+
         observations = np.zeros(len(y))
         hidden = np.zeros(len(y))
         observations[0] = y[0]
         hidden[0] = v0
 
-        # initialize weights and particles
-        dy = y[1]-y[0]
         # particles = np.maximum(1e-3, self.proposal_sample(self.N, v, dy, params))
         weights = np.array([1/self.N] * self.N)
-
-        # initialize param states
-        params_states = np.zeros((len(params)-1, N))
-        params_states[0] = np.random.rand(N)*(0.5-0.05)+0.05
-        params_states[1] = np.random.rand(N)*(9-1)+1
-        params_states[2] = np.random.rand(N)*(0.2-0.05)+0.05
-        params_states[3] = np.random.rand(N)*(0.91-0.01)+0.01
-        params_states[4] = np.random.rand(N)*(0.5) - 0.5
 
         # initialize v particles
         particles = norm.rvs(v0, 0.02, N)
         particles = np.maximum(1e-4, particles)
-        # particles = np.maximum(1e-4, self.proposal_sample(self.N, v0, dy, params))
 
-        all_params = np.zeros((len(params)-1, len(y)))
-        all_params[0][0] = np.sum(params_states[0][:] * weights)
-        all_params[1][0] = np.sum(params_states[1][:] * weights)
-        all_params[2][0] = np.sum(params_states[2][:] * weights)
-        all_params[3][0] = np.sum(params_states[3][:] * weights)
-        all_params[4][0] = np.sum(params_states[4][:] * weights)
-
-        # param states every step
-        params_steps = np.zeros((len(params)-1, len(y), N))
-        params_steps[0][0] = params_states[0]
-        params_steps[1][0] = params_states[1]
-        params_steps[2][0] = params_states[2]
-        params_steps[3][0] = params_states[3]
-        params_steps[4][0] = params_states[4]
+        # storing the estimated parameters each step
+        params_steps = np.zeros((len(params)-1, len(y)))
+        params_steps[0] = np.mean(params_states[0])
+        params_steps[1] = np.mean(params_states[1])
+        params_steps[2] = np.mean(params_states[2])
+        params_steps[3] = np.mean(params_states[3])
+        params_steps[4] = np.mean(params_states[4])
 
         for i in range(1, len(y)):
             dy = y[i] - y[i-1]
 
             # prediction
-            mu = params_states[0]
-            kappa = params_states[1]
-            theta = params_states[2]
-            sigma = params_states[3]
-            rho = params_states[4]
-
             # proposal sample
-            m = particles + kappa*(theta-particles)*self.dt + \
-                    sigma*rho*(dy - (mu-1/2*particles)*self.dt)
-            s = sigma*np.sqrt(particles*(1-rho**2)*self.dt)
-            x_pred = norm.rvs(m, s, N)
+            x_pred = self.proposal_sample(N, particles, dy, params_states)
             x_pred = np.maximum(1e-3, x_pred)
 
             # weights
-            mLi = y[i-1] + (mu-1/2*x_pred)*self.dt
-            sLi = np.sqrt(particles*self.dt)
-            Li = norm.pdf(y[i], mLi, sLi)
-
-            mI = particles + kappa*(theta-particles)*self.dt + sigma*rho*(dy-(mu-1/2*particles)*self.dt)
-            sI = sigma*np.sqrt(particles*(1-rho**2)*self.dt)
-            I = norm.pdf(x_pred, mI, sI)
-
-            c_ = (1+1/2*sigma*rho*self.dt)
-            mT = 1/c_ * (particles+kappa*(theta-particles)*self.dt + 1/2*sigma*rho*particles*self.dt)
-            sT = 1/c_ * sigma*np.sqrt(particles*self.dt)
-            T = norm.pdf(x_pred, mT, sT)
-
-            # print("importance min: {}".format(min(I)))
+            Li = self.likelihood(y[i], x_pred, particles, y[i-1], params_states)
+            I = self.proposal(x_pred, particles, dy, params_states)
+            T = self.transition(x_pred, particles, params_states)
             weights = weights * (Li*T/I)
-            # print("weight max post: {}".format(max(weights)))
             weights = weights/sum(weights)
-            print(self._neff(weights))
-            # plt.hist(weights, bins=20, density=True)
-            # plt.show()
 
             # Resampling
             if self._neff(weights) < 0.7*self.N:
                 print('resampling since: {}'.format(self._neff(weights)))
-                # params_states[0], _ = self._simple_resample(params_states[0], weights)
-                # params_states[1], _ = self._simple_resample(params_states[1], weights)
-                # params_states[2], _ = self._simple_resample(params_states[2], weights)
-                # params_states[3], _ = self._simple_resample(params_states[3], weights)
-                # params_states[4], _ = self._simple_resample(params_states[4], weights)
-                # x_pred, weights = self._simple_resample(x_pred, weights)
+                if simple_resample:
+                    x_pred, weights, params_states = self._simple_resample(x_pred, weights, params_states)
+                else:
+                    x_pred, weights, params_states = self._systematic_resample(x_pred, weights, params_states)
 
-                # systematic resample
-                idxs = systematic_resample(weights)
-                params_states[0], _ = self._resample_from_index(params_states[0], weights, idxs)
-                params_states[1], _ = self._resample_from_index(params_states[1], weights, idxs)
-                params_states[2], _ = self._resample_from_index(params_states[2], weights, idxs)
-                params_states[3], _ = self._resample_from_index(params_states[3], weights, idxs)
-                params_states[4], _ = self._resample_from_index(params_states[4], weights, idxs)
-                x_pred, weights = self._resample_from_index(x_pred, weights, idxs)
-
-            # plt.hist(params_states[0], bins=20)
-            # plt.show()
             hidden[i] = np.sum(x_pred * weights)
             particles = x_pred
 
-            all_params[0][i] = np.sum(params_states[0] * weights)
-            all_params[1][i] = np.sum(params_states[1] * weights)
-            all_params[2][i] = np.sum(params_states[2] * weights)
-            all_params[3][i] = np.sum(params_states[3] * weights)
-            all_params[4][i] = np.sum(params_states[4] * weights)
+            params_steps[0][i] = np.sum(params_states[0] * weights)
+            params_steps[1][i] = np.sum(params_states[1] * weights)
+            params_steps[2][i] = np.sum(params_states[2] * weights)
+            params_steps[3][i] = np.sum(params_states[3] * weights)
+            params_steps[4][i] = np.sum(params_states[4] * weights)
 
-            params_steps[0][i] = params_states[0]
-            params_steps[1][i] = params_states[1]
-            params_steps[2][i] = params_states[2]
-            params_steps[3][i] = params_states[3]
-            params_steps[4][i] = params_states[4]
-
-        return hidden, all_params, params_steps
+        return hidden, params_steps
 
     def obj_likelihood(self, x, dy_next, params):
-        mu, kappa, theta, sigma, rho, v0 = self._unwrap_params(params)
+        if len(params.shape) < 2: # params is an array of param values, not particles
+            mu, kappa, theta, sigma, rho, v0 = self._unwrap_params(params)
+        else:
+            mu, kappa, theta, sigma, rho = self._unwrap_param_states(params)
         m = dy_next + (mu-1/2*x)*self.dt
         s = np.sqrt(x*self.dt)
         return norm.pdf(x, m, s)
 
     def proposal(self, x, x_prev, dy, params):
-    	mu, kappa, theta, sigma, rho, v0 = self._unwrap_params(params)
-    	m = x_prev + kappa*(theta-x_prev)*self.dt + sigma*rho*(dy - (mu-1/2*x_prev)*self.dt)
-    	s = sigma*np.sqrt(x_prev*(1-rho**2)*self.dt)
-    	return norm.pdf(x, m, s)
+        if len(params.shape) < 2: # params is an array of param values, not particles
+            mu, kappa, theta, sigma, rho, v0 = self._unwrap_params(params)
+        else:
+            mu, kappa, theta, sigma, rho = self._unwrap_param_states(params)
+        m = x_prev + kappa*(theta-x_prev)*self.dt + sigma*rho*(dy - (mu-1/2*x_prev)*self.dt)
+        s = sigma*np.sqrt(x_prev*(1-rho**2)*self.dt)
+        return norm.pdf(x, m, s)
 
     def likelihood(self, y, x, x_prev, y_prev, params):
-        mu, kappa, theta, sigma, rho, v0 = self._unwrap_params(params)
+        if len(params.shape) < 2: # params is an array of param values, not particles
+            mu, kappa, theta, sigma, rho, v0 = self._unwrap_params(params)
+        else:
+            mu, kappa, theta, sigma, rho = self._unwrap_param_states(params)
         m = y_prev + (mu-1/2*x)*self.dt
         s = np.sqrt(x_prev*self.dt)
         return norm.pdf(y, m ,s)
 
     def transition(self, x, x_prev, params):
-        mu, kappa, theta, sigma, rho, v0 = self._unwrap_params(params)
+        if len(params.shape) < 2: # params is an array of param values, not particles
+            mu, kappa, theta, sigma, rho, v0 = self._unwrap_params(params)
+        else:
+            mu, kappa, theta, sigma, rho = self._unwrap_param_states(params)
         m = 1/(1+1/2*sigma*rho*self.dt) * (x_prev + kappa*(theta-x_prev)*self.dt + 1/2*sigma*rho*x_prev*self.dt)
         s = 1/(1+1/2*sigma*rho*self.dt) * sigma * np.sqrt(x_prev*self.dt)
         return norm.pdf(x, m, s)
@@ -218,16 +175,30 @@ class PFHeston(object):
         s = np.sqrt(x*self.dt)
         return norm.pdf(y, m, s)
 
+    def _init_parameter_states(self, num_params, N, bounds):
+        # initialize param states
+        params_states = np.zeros((num_params-1, N))
+        b0, b1, b2, b3, b4 = bounds
+        params_states[0] = np.random.rand(N)*(b0[1]-b0[0])+b0[0]
+        params_states[1] = np.random.rand(N)*(b1[1]-b1[0])+b1[0]
+        params_states[2] = np.random.rand(N)*(b2[1]-b2[0])+b2[0]
+        params_states[3] = np.random.rand(N)*(b3[1]-b3[0])+b3[0]
+        params_states[4] = np.random.rand(N)*(b4[1]-b4[0])+b4[0]
+        return params_states
+
     def proposal_sample(self, N, x_prev, dy, params):
         """
         x_prev is array of particles
         """
-        mu, kappa, theta, sigma, rho, v0 = self._unwrap_params(params)
+        if len(params.shape) < 2: # params is an array of param values, not particles
+            mu, kappa, theta, sigma, rho, v0 = self._unwrap_params(params)
+        else:
+            mu, kappa, theta, sigma, rho = self._unwrap_param_states(params)
         m = x_prev + kappa*(theta-x_prev)*self.dt + sigma*rho*(dy - (mu-1/2*x_prev)*self.dt)
         s = sigma*np.sqrt(x_prev*(1-rho**2)*self.dt)
         return norm.rvs(m, s, N)
 
-    def _simple_resample(self, particles, weights):
+    def __simple_resample(self, particles, weights):
         N = len(particles)
         cumulative_sum = np.cumsum(weights)
         cumulative_sum[-1] = 1. # avoid round-off error
@@ -236,18 +207,43 @@ class PFHeston(object):
 	    # resample according to indexes
         particles[:] = particles[indexes]
         new_weights = np.ones(len(weights)) / len(weights)
-        # weights.fill(1.0 / N)
         return particles, new_weights
 
     def _resample_from_index(self, particles, weights, indexes):
         particles[:] = particles[indexes]
         weights[:] = weights[indexes]
         new_weights = np.ones(len(weights)) / len(weights)
-        # weights.fill(1.0 / len(weights))
         return particles, new_weights
+
+    def _systematic_resample(self, x_pred, weights, params_states):
+        idxs = systematic_resample(weights)
+        params_states[0], _ = self._resample_from_index(params_states[0], weights, idxs)
+        params_states[1], _ = self._resample_from_index(params_states[1], weights, idxs)
+        params_states[2], _ = self._resample_from_index(params_states[2], weights, idxs)
+        params_states[3], _ = self._resample_from_index(params_states[3], weights, idxs)
+        params_states[4], _ = self._resample_from_index(params_states[4], weights, idxs)
+        x_pred, weights = self._resample_from_index(x_pred, weights, idxs)
+        return x_pred, weights, params_states
+
+    def _simple_resample(self, x_pred, weights, params_states):
+        params_states[0], _ = self.__simple_resample(params_states[0], weights)
+        params_states[1], _ = self.__simple_resample(params_states[1], weights)
+        params_states[2], _ = self.__simple_resample(params_states[2], weights)
+        params_states[3], _ = self.__simple_resample(params_states[3], weights)
+        params_states[4], _ = self.__simple_resample(params_states[4], weights)
+        x_pred, weights = self.__simple_resample(x_pred, weights)
+        return x_pred, weights, params_states
 
     def _neff(self, weights):
         return 1. / np.sum(np.square(weights))
+
+    def _unwrap_param_states(self, params_states):
+        mu = params_states[0]
+        kappa = params_states[1]
+        theta = params_states[2]
+        sigma = params_states[3]
+        rho = params_states[4]
+        return mu, kappa, theta, sigma, rho
 
     def _unwrap_params(self, params):
         def periodic_map(x, c, d):
