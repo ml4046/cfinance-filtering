@@ -12,7 +12,8 @@ class PFHeston(object):
         self.dt = dt
 
 
-    def filter(self, y, params):
+    # deprecated: use obj
+    def filter_(self, y, params):
         """
         Performs sequential monte-carlo sampling particle filtering
         """
