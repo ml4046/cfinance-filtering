@@ -123,8 +123,8 @@ def simulate_vgsa(params, S0, N=1000, dt=1/250):
 
     vol[0] = vol[1]
     print('num neg. vol: {}'.format(sum(vol<0)))
-    vol = np.maximum(0, vol)
-    return logs, vol
+    # vol = np.maximum(0, vol)
+    return logs, abs(vol)
 
 
 
