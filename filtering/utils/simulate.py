@@ -64,6 +64,7 @@ def simulate_vg(params, S0, N=1000, dt=1/250):
     h = dt
     omega = 1/nu * np.log(1-theta*nu-sigma**2*nu/2) # dt*Psi(-u)
     logs = np.zeros(N+1)
+    jumps = np.zeros(N+1)
 
     logs[0] = np.log(S0)
     si = logs[0]
@@ -74,7 +75,9 @@ def simulate_vg(params, S0, N=1000, dt=1/250):
         X = theta*g + sigma*np.sqrt(g)*z
         si = si + mu*h + omega*h + X
         logs[i] = si
-    return logs
+        jumps[i] = X
+    jumps[0] = jumps[1]
+    return logs, jumps
 
 def simulate_vgsa(params, S0, N=1000, dt=1/250):
 
@@ -100,7 +103,7 @@ def simulate_vgsa(params, S0, N=1000, dt=1/250):
         return log_A + B*y0
 
     logs = np.zeros(N+1)
-    vol = np.zeros(N+1)
+    jumps = np.zeros(N+1)
 
     logs[0] = np.log(S0)
     si = logs[0]
@@ -118,13 +121,11 @@ def simulate_vgsa(params, S0, N=1000, dt=1/250):
                     log_phi(-1j*Psi(-1j), t2*dt, 1/nu)
         sj = si + mu*dt + omega + X
         logs[i] = sj
-        vol[i] = X
+        jumps[i] = X
         si = sj
 
-    vol[0] = vol[1]
-    print('num neg. vol: {}'.format(sum(vol<0)))
-    # vol = np.maximum(0, vol)
-    return logs, abs(vol)
+    jumps[0] = jumps[1]
+    return logs, jumps
 
 
 
