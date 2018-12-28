@@ -15,10 +15,10 @@ source venv/bin/activate
 ```
 Run `python -r requirements.txt` to install all required packages. Run `jupyter notebook` to run notebooks.
 
-# Testing
-Simulation can be found in `simulate.py` for Heston, VG, and VGSA process with notebook examples.
+# Examples and testing
+Examples on filtering and simulating processes based on Heston. VG (Variance Gamma), and VGSA can be found in the notebooks directory.
 
-The implemented filtering process can be found in `kf.py` and `particle_filter.py`. Currently, only filtering for Heston has been added. We also have notebook examples on simulated data in `ekf_heston.ipynb`, `ukf_heston.ipynb` and `pf_heston_example.ipynb`.
+The implementations for filtering can be found in the filtering directory.
 
 # Acknowledgement
 We would like to thank Prof. Hirsa for his guidance on this project.
