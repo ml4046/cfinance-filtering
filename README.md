@@ -16,7 +16,7 @@ source venv/bin/activate
 Run `python -r requirements.txt` to install all required packages. Run `jupyter notebook` to run notebooks.
 
 # Examples and testing
-Examples on filtering and simulating processes based on Heston. VG (Variance Gamma), and VGSA can be found in the notebooks directory.
+Examples on filtering and simulating processes based on Heston, VG (Variance Gamma), and VGSA can be found in the notebooks directory.
 
 The implementations for filtering can be found in the filtering directory.
 
