@@ -100,6 +100,7 @@ def simulate_vgsa(params, S0, N=1000, dt=1/250):
         return log_A + B*y0
 
     logs = np.zeros(N+1)
+    vol = np.zeros(N+1)
 
     logs[0] = np.log(S0)
     si = logs[0]
@@ -117,8 +118,13 @@ def simulate_vgsa(params, S0, N=1000, dt=1/250):
                     log_phi(-1j*Psi(-1j), t2*dt, 1/nu)
         sj = si + mu*dt + omega + X
         logs[i] = sj
+        vol[i] = X
         si = sj
-    return logs
+
+    vol[0] = vol[1]
+    print('num neg. vol: {}'.format(sum(vol<0)))
+    vol = np.maximum(0, vol)
+    return logs, vol
 
 
 

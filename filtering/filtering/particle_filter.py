@@ -1,7 +1,9 @@
 import numpy as np
+import matplotlib.pyplot as plt
+
 from scipy.optimize import fmin, fmin_bfgs
 from scipy.stats import norm
-import matplotlib.pyplot as plt
+from numpy.random import gamma
 from filterpy.monte_carlo import systematic_resample, stratified_resample
 
 class PFHeston(object):
@@ -267,3 +269,90 @@ class PFHeston(object):
         rho = periodic_map(params[4], -1, 1)
         v0 = periodic_map(params[5], 1e-3, 0.2) # ensure positive vt
         return mu, kappa, theta, sigma, rho, v0
+
+class PFVGSA(object):
+    def __init__(self, N=1000, dt=1/250):
+        self.dt = dt
+        self.N = N # number of particles
+
+    def filter(self, y, params):
+        mu, kappa, theta, sigma, nu, eta, lda, omega = self._unwrap_params(params)
+        ai = np.array([1/nu] * self.N) + np.random.rand(self.N)
+        xj = self.sample_vol(ai, self.N)
+        weights = np.ones(self.N)/self.N
+
+        vol = np.zeros(len(y))
+        vol[0] = np.mean(np.mean(xj, axis=0))
+        for i in range(1, len(y)):
+            # transition states
+            print(np.sum(np.mean(xj, axis=0)*weights))
+            aj = ai + kappa*(eta-ai)*self.dt + lda*np.sqrt(ai*self.dt)*norm.rvs(size=self.N)
+            aj = np.maximum(1e-3, aj)
+            xj = self.sample_vol(aj, self.N)
+            # compute unconditional state
+            xj_uncond = np.mean(xj, axis=0)
+
+            weights = weights * self.likelihood(y[i], xj_uncond, y[i-1], params)
+            weights = weights/sum(weights)
+            
+            # Resampling
+            if self._neff(weights) < 0.8*self.N:
+                print('resampling since: {}'.format(self._neff(weights)))
+                xj_uncond, weights = self._systematic_resample(xj_uncond, weights)
+
+            vol[i] = np.sum(weights*xj_uncond)
+            ai = aj
+        return vol
+
+    def likelihood(self, obs, x_uncond, obs_prev, params):
+        mu, kappa, theta, sigma, nu, eta, lda, omega = self._unwrap_params(params)
+        m = obs_prev + (mu+omega)*self.dt + theta*x_uncond
+        s = sigma*np.sqrt(x_uncond)
+        return norm.pdf(obs, m, s)
+
+    def sample_vol(self, arrival_rates, num_particles):
+        vol = np.zeros((len(arrival_rates), num_particles))
+        for i in range(len(arrival_rates)):
+            vol[i] = sps.gamma.rvs(arrival_rates[i]*self.dt, size=self.N)
+        return vol
+
+    def _unwrap_params(self, params):
+        mu = params[0]
+        kappa = params[1] # mean reversion rate
+        theta = params[2]
+        sigma = params[3]
+        nu = params[4]
+        eta = params[5] # long-term rate of time change
+        lda = params[6] # time change volatility
+        omega = 1/nu*np.log(1-theta*nu-sigma**2*nu/2)
+        return mu, kappa, theta, sigma, nu, eta, lda, omega
+
+    def _systematic_resample(self, particles, weights):
+        idxs = systematic_resample(weights)
+        particles[:] = particles[idxs]
+        return particles, np.ones(len(weights))/len(weights)
+
+    def _neff(self, weights):
+        return 1. / np.sum(np.square(weights))
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
