@@ -1,7 +1,10 @@
 import numpy as np
+import matplotlib.pyplot as plt
+import scipy.stats as sps
+
 from scipy.optimize import fmin, fmin_bfgs
 from scipy.stats import norm
-import matplotlib.pyplot as plt
+from numpy.random import gamma
 from filterpy.monte_carlo import systematic_resample, stratified_resample
 
 class PFHeston(object):
@@ -68,6 +71,7 @@ class PFHeston(object):
     def filter(self, params, is_bounds=True, simple_resample=False):
         """
         Performs sequential monte-carlo sampling particle filtering
+        Note: Currently only supports a bound of parameters
         """
         y = self.y
         N = self.N
@@ -77,7 +81,7 @@ class PFHeston(object):
         else:
             # initialize param states, N particles for each param sampled uniformly
             v0 = params[-1] # params is shape [(lb, ub)_1,...,k, v0]
-            params_states = self._init_parameter_states(len(params), N, params[:-1])
+            params_states = self._init_parameter_states(len(params)-1, N, params[:-1])
 
         observations = np.zeros(len(y))
         hidden = np.zeros(len(y))
@@ -93,6 +97,8 @@ class PFHeston(object):
 
         # storing the estimated parameters each step
         params_steps = np.zeros((len(params)-1, len(y)))
+        params_steps.transpose()[0] = np.mean(params_states, axis=1)
+
         params_steps[0] = np.mean(params_states[0])
         params_steps[1] = np.mean(params_states[1])
         params_steps[2] = np.mean(params_states[2])
@@ -125,11 +131,13 @@ class PFHeston(object):
             hidden[i] = np.sum(x_pred * weights)
             particles = x_pred
 
-            params_steps[0][i] = np.sum(params_states[0] * weights)
-            params_steps[1][i] = np.sum(params_states[1] * weights)
-            params_steps[2][i] = np.sum(params_states[2] * weights)
-            params_steps[3][i] = np.sum(params_states[3] * weights)
-            params_steps[4][i] = np.sum(params_states[4] * weights)
+            params_steps.transpose()[i] = np.sum(np.multiply(params_states, weights[np.newaxis, :]), axis=1)
+
+            # params_steps[0][i] = np.sum(params_states[0] * weights)
+            # params_steps[1][i] = np.sum(params_states[1] * weights)
+            # params_steps[2][i] = np.sum(params_states[2] * weights)
+            # params_steps[3][i] = np.sum(params_states[3] * weights)
+            # params_steps[4][i] = np.sum(params_states[4] * weights)
 
         return hidden, params_steps
 
@@ -267,3 +275,143 @@ class PFHeston(object):
         rho = periodic_map(params[4], -1, 1)
         v0 = periodic_map(params[5], 1e-3, 0.2) # ensure positive vt
         return mu, kappa, theta, sigma, rho, v0
+
+class PFVGSA(object):
+    def __init__(self, N=1000, dt=1/250):
+        self.dt = dt
+        self.N = N # number of particles
+
+    def filter(self, y, params, is_bounds=False):
+        if not is_bounds: # params is an array of param values, not particles
+            mu, kappa, theta, sigma, nu, eta, lda, omega = self._unwrap_params(params)
+        else:
+            # initialize param states, N particles for each param sampled uniformly
+            params_states = self._init_parameter_states(len(params), self.N, params)
+
+        ai = 1/params_states[4]
+        xj = self.sample_vol(ai, self.N)
+        weights = np.ones(self.N)/self.N
+
+        vol = np.zeros(len(y))
+        vol[0] = np.mean(np.mean(xj, axis=0))
+
+        # storing the estimated parameters each step
+        params_steps = np.zeros((len(params), len(y)))
+        params_steps.transpose()[0] = np.mean(params_states, axis=1)
+
+        for i in range(1, len(y)):
+            # transition states
+            print(np.sum(np.mean(xj, axis=0)*weights))
+            mu, kappa, theta, sigma, nu, eta, lda, omega = self._unwrap_param_states(params_states)
+            aj = ai + kappa*(eta-ai)*self.dt + lda*np.sqrt(ai*self.dt)*norm.rvs(size=self.N)
+            aj = np.maximum(1e-3, aj)
+            xj = self.sample_vol(aj, self.N)
+
+            # compute unconditional state
+            xj_uncond = np.mean(xj, axis=0)
+
+            weights = weights * self.likelihood(y[i], xj_uncond, y[i-1], params_states)
+            weights = weights/sum(weights)
+            
+            # Resampling
+            if self._neff(weights) < 0.7*self.N:
+                print('resampling since: {}'.format(self._neff(weights)))
+                params_states, _ = self._systematic_resample_states(params_states, weights)
+                xj_uncond, weights = self._systematic_resample(xj_uncond, weights)
+
+            vol[i] = np.sum(weights*xj_uncond)
+            params_steps.transpose()[i] = np.sum(np.multiply(params_states, weights[np.newaxis, :]), axis=1)
+
+            ai = aj
+        return vol, params_steps
+
+    def likelihood(self, obs, x_uncond, obs_prev, params):
+        if isinstance(params, list):
+            mu, kappa, theta, sigma, nu, eta, lda, omega = self._unwrap_params(params)
+        else:
+            mu, kappa, theta, sigma, nu, eta, lda, omega = self._unwrap_param_states(params)
+        m = obs_prev + (mu+omega)*self.dt + theta*x_uncond
+        s = sigma*np.sqrt(x_uncond)
+        return norm.pdf(obs, m, s)
+
+    def sample_vol(self, arrival_rates, num_particles):
+        vol = np.zeros((len(arrival_rates), num_particles))
+        for i in range(len(arrival_rates)):
+            vol[i] = sps.gamma.rvs(arrival_rates[i]*self.dt, size=self.N)
+        return vol
+
+    def _unwrap_params(self, params):
+        mu = params[0]
+        kappa = params[1] # mean reversion rate
+        theta = params[2]
+        sigma = params[3]
+        nu = params[4]
+        eta = params[5] # long-term rate of time change
+        lda = params[6] # time change volatility
+        omega = 1/nu*np.log(1-theta*nu-sigma**2*nu/2)
+        return mu, kappa, theta, sigma, nu, eta, lda, omega
+
+    def _systematic_resample(self, particles, weights):
+        idxs = systematic_resample(weights)
+        particles[:] = particles[idxs]
+        return particles, np.ones(len(weights))/len(weights)
+
+    def _systematic_resample_states(self, params_states, weights):
+        idxs = systematic_resample(weights)
+        params_states[0] = params_states[0][idxs]
+        params_states[1] = params_states[1][idxs]
+        params_states[2] = params_states[2][idxs]
+        params_states[3] = params_states[3][idxs]
+        params_states[4] = params_states[4][idxs]
+        params_states[5] = params_states[5][idxs]
+        params_states[6] = params_states[6][idxs]
+        return params_states, np.ones(len(weights))/len(weights)
+
+    def _neff(self, weights):
+        return 1. / np.sum(np.square(weights))
+
+
+    def _init_parameter_states(self, num_params, N, bounds):
+        # initialize param states
+        params_states = np.zeros((num_params, N))
+        b0, b1, b2, b3, b4, b5, b6 = bounds
+        params_states[0] = np.random.rand(N)*(b0[1]-b0[0])+b0[0]
+        params_states[1] = np.random.rand(N)*(b1[1]-b1[0])+b1[0]
+        params_states[2] = np.random.rand(N)*(b2[1]-b2[0])+b2[0]
+        params_states[3] = np.random.rand(N)*(b3[1]-b3[0])+b3[0]
+        params_states[4] = np.random.rand(N)*(b4[1]-b4[0])+b4[0]
+        params_states[5] = np.random.rand(N)*(b5[1]-b5[0])+b5[0]
+        params_states[6] = np.random.rand(N)*(b6[1]-b6[0])+b6[0]        
+        return params_states
+
+    def _unwrap_param_states(self, params_states):
+        mu = params_states[0]
+        kappa = params_states[1] # mean reversion rate
+        theta = params_states[2]
+        sigma = params_states[3]
+        nu = params_states[4]
+        eta = params_states[5] # long-term rate of time change
+        lda = params_states[6] # time change volatility
+        omega = 1/nu*np.log(1-theta*nu-sigma**2*nu/2)
+        return mu, kappa, theta, sigma, nu, eta, lda, omega
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
