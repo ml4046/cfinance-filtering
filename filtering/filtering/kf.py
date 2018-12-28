@@ -141,9 +141,9 @@ class UKFHeston(object):
         self.logS0 = np.log(y[0]) if not is_log else y[0]
         self.dt = dt
 
-
     def obj(self, params):
         mu, kappa, theta, sigma, rho, v0 = self._unwrap_params(params)
+        print(params)
         y_hat = self.logS0
         N = len(self.y)
         Ew, Ev, P, F, H = self._init_transitions(params)
@@ -151,28 +151,26 @@ class UKFHeston(object):
 
         # init sigma points and weight updates params
         L = 2 # heston has two states
-        K = 0
+        K = 3-L
         alpha = 1e-3
         beta = 2
         x_sig, lda, W_m, W_c = self._init_weights(params, L, K, alpha, beta)
-
         obj = 0 # constant for making matrix Semi Pos. Def
         eps = 1e-6
         for i in range(1, N):
             # prediction
             dy = self.y[i] - self.y[i-1]
-            F_x_sig, H_x_sig, x_pred, P_pred, y_hat = self._time_update(params, x_update, x_sig, W_m, W_c, F, H, self.y[i], dy, P, Ew, Ev, L, lda)
+            F_x_sig, H_x_sig, x_pred, P_pred, y_hat = self._time_update(params, x_update, x_sig, W_m, W_c, F, H, self.y[i-1], dy, P, Ew, Ev, L, lda)
 
             # measurement update
             R = x_pred * self.dt
             x_update, P, Pyy = self._measurement_update(F_x_sig, H_x_sig, W_c, x_pred, P_pred, self.y[i], y_hat, R)
             
             # likelihood
-            # TODO: check if correct
             delta = self.y[i] - y_hat
             A = Pyy # don't need H to retrieve entries and R already added
             obj += np.log(np.fabs(A)) + delta**2/A
-        return obj
+        return obj/N
 
     def optimize(self, init_params, maxiter=10000):
         """
@@ -209,7 +207,7 @@ class UKFHeston(object):
 
         # init sigma points and weight updates params
         L = 2 # heston has two states
-        K = 0
+        K = 3-L
         alpha = 1e-3
         beta = 2
         x_sig, lda, W_m, W_c = self._init_weights(params, L, K, alpha, beta)
@@ -218,7 +216,7 @@ class UKFHeston(object):
         for i in range(1, N):
             # prediction
             dy = y[i] - y[i-1]
-            F_x_sig, H_x_sig, x_pred, P_pred, y_hat = self._time_update(params, x_update, x_sig, W_m, W_c, F, H, y[i], dy, P, Ew, Ev, L, lda)
+            F_x_sig, H_x_sig, x_pred, P_pred, y_hat = self._time_update(params, x_update, x_sig, W_m, W_c, F, H, y[i-1], dy, P, Ew, Ev, L, lda)
 
             # measurement update
             R = x_pred * self.dt
@@ -239,7 +237,7 @@ class UKFHeston(object):
         # replace negative values in diagonal with small constant
         while not self._is_pos_def(P_aug):
             P_aug = P_aug + eps * np.eye(P_aug.shape[0])
-        u_state = kappa*theta*self.dt - sigma*rho*mu*self.dt + sigma*rho*(dy)
+        u_state = kappa*theta*self.dt - sigma*rho*mu*self.dt + sigma*rho*dy
 
         # generating sigma points
         # note P_aug is diagonal
@@ -344,11 +342,11 @@ class UKFHeston(object):
                 else:
                     y = d + n*range - (x-c)
             return y
-        mu = periodic_map(params[0], 0.01, 1)
+        mu = periodic_map(params[0], -0.5, 1)
         kappa = periodic_map(params[1], 1, 3)
         theta = periodic_map(params[2], 0.001, 0.2)
         sigma = periodic_map(params[3], 1e-3, 0.7)
-        rho = periodic_map(params[4], -1, 1)
+        rho = periodic_map(params[4], -1, 0)
         v0 = periodic_map(params[5], 1e-3, 0.2) # ensure positive vt
         return mu, kappa, theta, sigma, rho, v0
     
