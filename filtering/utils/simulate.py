@@ -141,8 +141,3 @@ def simulate_vgsa(params, S0, N=1000, dt=1/250):
 
 
 
-
-
-
-
-
