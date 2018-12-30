@@ -38,6 +38,8 @@ class EKFHeston(object):
     
     def filter(self, y, params):
         x_update, F, U, Q, H, P_update, I = self._init_transition(params)
+        mu, kappa, theta, sigma, rho, v0 = self._unwrap_params(params)
+        print("params: {}".format([mu, kappa, theta, sigma, rho, v0]))
         N = len(y)
         observations = np.zeros(N)
         hidden = np.zeros(N)
@@ -55,7 +57,7 @@ class EKFHeston(object):
                                                           H, A, delta, I)
             observations[i] = x_update[0,0]
             hidden[i] = x_update[1,0]
-        return observations[1:], hidden[1:]
+        return (observations[1:], hidden[1:])
     
     # TODO: allow different optimizers
     def optimize(self, init_params, maxiter=10000):
@@ -193,6 +195,7 @@ class UKFHeston(object):
 
     def filter(self, y, params):
         mu, kappa, theta, sigma, rho, v0 = self._unwrap_params(params)
+        print("params: {}".format([mu, kappa, theta, sigma, rho, v0]))
         y_hat = self.logS0
         N = len(y)
         # initialize transitions

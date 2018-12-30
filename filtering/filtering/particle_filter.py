@@ -1,6 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import scipy.stats as sps
+import scipy.special as spec
 
 from scipy.optimize import fmin, fmin_bfgs
 from scipy.stats import norm
@@ -68,7 +69,7 @@ class PFHeston(object):
             print('done with step: {}'.format(i))
         return observations, hidden
 
-    def filter(self, params, is_bounds=True, simple_resample=False):
+    def filter(self, params, is_bounds=True, simple_resample=False, predict_obs=False):
         """
         Performs sequential monte-carlo sampling particle filtering
         Note: Currently only supports a bound of parameters
@@ -81,7 +82,7 @@ class PFHeston(object):
         else:
             # initialize param states, N particles for each param sampled uniformly
             v0 = params[-1] # params is shape [(lb, ub)_1,...,k, v0]
-            params_states = self._init_parameter_states(len(params)-1, N, params[:-1])
+            params_states = self._init_parameter_states(N, params[:-1])
 
         observations = np.zeros(len(y))
         hidden = np.zeros(len(y))
@@ -98,12 +99,6 @@ class PFHeston(object):
         # storing the estimated parameters each step
         params_steps = np.zeros((len(params)-1, len(y)))
         params_steps.transpose()[0] = np.mean(params_states, axis=1)
-
-        params_steps[0] = np.mean(params_states[0])
-        params_steps[1] = np.mean(params_states[1])
-        params_steps[2] = np.mean(params_states[2])
-        params_steps[3] = np.mean(params_states[3])
-        params_steps[4] = np.mean(params_states[4])
 
         for i in range(1, len(y)):
             dy = y[i] - y[i-1]
@@ -128,21 +123,20 @@ class PFHeston(object):
                 else:
                     x_pred, weights, params_states = self._systematic_resample(x_pred, weights, params_states)
 
+            # observation prediction
+            if predict_obs:
+                y_hat = self.observation_predict(x_pred, particles, y[i-1], np.mean(params_states[0])) # mu is the 0 index
+                observations[i] = y_hat
+                print("Done with iter: {}".format(i))
+
             hidden[i] = np.sum(x_pred * weights)
             particles = x_pred
-
             params_steps.transpose()[i] = np.sum(np.multiply(params_states, weights[np.newaxis, :]), axis=1)
 
-            # params_steps[0][i] = np.sum(params_states[0] * weights)
-            # params_steps[1][i] = np.sum(params_states[1] * weights)
-            # params_steps[2][i] = np.sum(params_states[2] * weights)
-            # params_steps[3][i] = np.sum(params_states[3] * weights)
-            # params_steps[4][i] = np.sum(params_states[4] * weights)
-
-        return hidden, params_steps
+        return (hidden, params_steps, observations) if predict_obs else (hidden, params_steps)
 
     def obj_likelihood(self, x, dy_next, params):
-        if len(params.shape) < 2: # params is an array of param values, not particles
+        if isinstance(params, list): # params is an array of param values, not particles
             mu, kappa, theta, sigma, rho, v0 = self._unwrap_params(params)
         else:
             mu, kappa, theta, sigma, rho = self._unwrap_param_states(params)
@@ -151,7 +145,7 @@ class PFHeston(object):
         return norm.pdf(x, m, s)
 
     def proposal(self, x, x_prev, dy, params):
-        if len(params.shape) < 2: # params is an array of param values, not particles
+        if isinstance(params, list): # params is an array of param values, not particles
             mu, kappa, theta, sigma, rho, v0 = self._unwrap_params(params)
         else:
             mu, kappa, theta, sigma, rho = self._unwrap_param_states(params)
@@ -160,7 +154,7 @@ class PFHeston(object):
         return norm.pdf(x, m, s)
 
     def likelihood(self, y, x, x_prev, y_prev, params):
-        if len(params.shape) < 2: # params is an array of param values, not particles
+        if isinstance(params, list): # params is an array of param values, not particles
             mu, kappa, theta, sigma, rho, v0 = self._unwrap_params(params)
         else:
             mu, kappa, theta, sigma, rho = self._unwrap_param_states(params)
@@ -169,7 +163,7 @@ class PFHeston(object):
         return norm.pdf(y, m ,s)
 
     def transition(self, x, x_prev, params):
-        if len(params.shape) < 2: # params is an array of param values, not particles
+        if isinstance(params, list): # params is an array of param values, not particles
             mu, kappa, theta, sigma, rho, v0 = self._unwrap_params(params)
         else:
             mu, kappa, theta, sigma, rho = self._unwrap_param_states(params)
@@ -177,15 +171,21 @@ class PFHeston(object):
         s = 1/(1+1/2*sigma*rho*self.dt) * sigma * np.sqrt(x_prev*self.dt)
         return norm.pdf(x, m, s)
 
-    def prediction_density(self, y, y_prev, x, params):
-        mu, kappa, theta, sigma, rho, v0 = self._unwrap_params(params)
+    def prediction_density(self, y, y_prev, x, mu):
         m = y_prev + (mu-1/2*x)*self.dt
         s = np.sqrt(x*self.dt)
         return norm.pdf(y, m, s)
 
-    def _init_parameter_states(self, num_params, N, bounds):
+    def observation_predict(self, x_pred, particles, y_prev, mu):
+        y_hat = y_prev + (mu-1/2*x_pred)*self.dt + np.sqrt(particles*self.dt)*norm.rvs()
+        py_hat = np.array([np.mean(self.prediction_density(y_hat[k], y_prev, x_pred, mu)) for k in range(len(y_hat))])
+        py_hat = py_hat/sum(py_hat)
+        return np.sum(py_hat * y_hat)
+
+    def _init_parameter_states(self, N, bounds):
         # initialize param states
-        params_states = np.zeros((num_params-1, N))
+        params_states = np.zeros((len(bounds)
+            , N))
         b0, b1, b2, b3, b4 = bounds
         params_states[0] = np.random.rand(N)*(b0[1]-b0[0])+b0[0]
         params_states[1] = np.random.rand(N)*(b1[1]-b1[0])+b1[0]
@@ -281,6 +281,45 @@ class PFVGSA(object):
         self.dt = dt
         self.N = N # number of particles
 
+    def filter_arrival(self, y, params, is_bounds=False):
+        if not is_bounds: # params is an array of param values, not particles
+            mu, kappa, theta, sigma, nu, eta, lda, omega = self._unwrap_params(params)
+        else:
+            # initialize param states, N particles for each param sampled uniformly
+            params_states = self._init_parameter_states(len(params), self.N, params)
+
+        xi = 1/params_states[4] # arrival rates are hidden
+        weights = np.ones(self.N)/self.N
+
+        arrival_rates = np.zeros(len(y))
+        arrival_rates[0] = np.mean(xi)
+
+        # storing the estimated parameters each step
+        params_steps = np.zeros((len(params), len(y)))
+        params_steps.transpose()[0] = np.mean(params_states, axis=1)
+
+        for i in range(1, len(y)):
+            mu, kappa, theta, sigma, nu, eta, lda, omega = self._unwrap_param_states(params_states)
+            xj = xi + kappa*(eta-xi)*self.dt + lda*np.sqrt(xi*self.dt)*norm.rvs(size=self.N)
+            if sum(xj<0) > 0:
+                print('num neg. arrival rate: {}'.format(sum(xj<0)))
+                xj = self.resample(xj, xi, params_states)
+
+            weights = weights * self.likelihood_arrival(xj, params_states)
+            weights = weights/sum(weights)
+
+            # Resampling
+            if self._neff(weights) < 0.7*self.N:
+                print('resampling since: {}'.format(self._neff(weights)))
+                params_states, _ = self._systematic_resample_states(params_states, weights)
+                xj, weights = self._systematic_resample(xj, weights)
+
+            arrival_rates[i] = np.sum(weights * xj)
+            params_steps.transpose()[i] = np.sum(np.multiply(params_states, weights[np.newaxis, :]), axis=1)
+            xi = xj
+        return arrival_rates, params_steps
+
+
     def filter(self, y, params, is_bounds=False):
         if not is_bounds: # params is an array of param values, not particles
             mu, kappa, theta, sigma, nu, eta, lda, omega = self._unwrap_params(params)
@@ -294,19 +333,21 @@ class PFVGSA(object):
 
         vol = np.zeros(len(y))
         vol[0] = np.mean(np.mean(xj, axis=0))
-
+        arrivals = np.zeros(len(y))
+        arrivals[0] = np.mean(ai)
         # storing the estimated parameters each step
         params_steps = np.zeros((len(params), len(y)))
         params_steps.transpose()[0] = np.mean(params_states, axis=1)
-
         for i in range(1, len(y)):
             # transition states
-            print(np.sum(np.mean(xj, axis=0)*weights))
+            # print(np.sum(np.mean(xj, axis=0)*weights))
             mu, kappa, theta, sigma, nu, eta, lda, omega = self._unwrap_param_states(params_states)
             aj = ai + kappa*(eta-ai)*self.dt + lda*np.sqrt(ai*self.dt)*norm.rvs(size=self.N)
-            aj = np.maximum(1e-3, aj)
-            xj = self.sample_vol(aj, self.N)
+            if sum(aj<0) > 0:
+                print('num neg. arrival rate: {}'.format(sum(aj<0)))
+                aj = self.resample(aj, ai, params_states)
 
+            xj = self.sample_vol(aj, self.N)
             # compute unconditional state
             xj_uncond = np.mean(xj, axis=0)
 
@@ -320,10 +361,10 @@ class PFVGSA(object):
                 xj_uncond, weights = self._systematic_resample(xj_uncond, weights)
 
             vol[i] = np.sum(weights*xj_uncond)
+            arrivals[i] = np.sum(weights * aj)
             params_steps.transpose()[i] = np.sum(np.multiply(params_states, weights[np.newaxis, :]), axis=1)
-
             ai = aj
-        return vol, params_steps
+        return vol, arrivals, params_steps
 
     def likelihood(self, obs, x_uncond, obs_prev, params):
         if isinstance(params, list):
@@ -339,6 +380,29 @@ class PFVGSA(object):
         for i in range(len(arrival_rates)):
             vol[i] = sps.gamma.rvs(arrival_rates[i]*self.dt, size=self.N)
         return vol
+
+    def resample(self, aj, ai, params):
+        if isinstance(params, list):
+            mu, kappa, theta, sigma, nu, eta, lda, omega = self._unwrap_params(params)
+        else:
+            mu, kappa, theta, sigma, nu, eta, lda, omega = self._unwrap_param_states(params)
+        neg_idxs = np.where(aj<0)[0]
+        for i in neg_idxs:
+            while aj[i] < 0:
+                aj[i] = ai[i] + kappa[i]*(eta[i]-ai[i])*self.dt + lda[i]*np.sqrt(ai[i]*self.dt)*norm.rvs()
+        return aj
+
+    def likelihood_arrival(self, arrival_rates, params):
+        if isinstance(params, list):
+            mu, kappa, theta, sigma, nu, eta, lda, omega = self._unwrap_params(params)
+        else:
+            mu, kappa, theta, sigma, nu, eta, lda, omega = self._unwrap_param_states(params)
+        a = 2*np.exp(theta*arrival_rates/sigma**2)
+        b = nu**(self.dt/nu)*np.sqrt(2*np.pi)*sigma*spec.gamma(self.dt/nu)
+        c = (arrival_rates**2/(2*sigma**2/nu+theta**2))**(self.dt/(2*nu)-1/4)
+        e = 1/sigma**2*np.sqrt(arrival_rates**2*(2*sigma**2/nu+theta**2))
+        d = spec.kv(self.dt/nu-1/2, e)
+        return a/b*c*d
 
     def _unwrap_params(self, params):
         mu = params[0]
