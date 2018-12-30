@@ -2,11 +2,23 @@ import numpy as np
 from scipy.optimize import fmin
 
 class EKFHeston(object):
-    def __init__(self, y, dt=1/250, is_log=False):
+    def __init__(self, y, dt=1/250, is_log=False, bounds=None):
         self.y = y # observations
         self.logS0 = np.log(y[0]) if not is_log else y[0]
         self.dt = dt # default to daily
-              
+
+        # bounds for periodic map
+        if self.bounds is not None:
+            self.bounds = bounds 
+        else:
+            mu = (0.01, 1)
+            kappa = (1, 3)
+            theta = (1e-3, 0.2)
+            sigma = (1e-3, 0.7)
+            rho = (-1, 1)
+            v0 = (1e-3, 0.2)
+            self.bounds = [my, kappa, theta, sigma, rho, v0]
+
     def observation_transition(self, x, params):
         """
         Heston observation state transition
@@ -129,19 +141,32 @@ class EKFHeston(object):
                 else:
                     y = d + n*range - (x-c)
             return y
-        mu = periodic_map(params[0], 0.01, 1)
-        kappa = periodic_map(params[1], 1, 3)
-        theta = periodic_map(params[2], 0.001, 0.2)
-        sigma = periodic_map(params[3], 1e-3, 0.7)
-        rho = periodic_map(params[4], -1, 1)
-        v0 = periodic_map(params[5], 1e-3, 0.2) # ensure positive vt
+        b0, b1, b2, b3, b4, b5 = self.bounds
+        mu = periodic_map(params[0], b0[0], b0[1])
+        kappa = periodic_map(params[1], b1[0], b1[1])
+        theta = periodic_map(params[2], b2[0], b2[2])
+        sigma = periodic_map(params[3], b3[0], b3[3])
+        rho = periodic_map(params[4], b4[0], b4[4])
+        v0 = periodic_map(params[5], b5[0], b5[5]) # ensure positive vt
         return mu, kappa, theta, sigma, rho, v0
 
 class UKFHeston(object):
-    def __init__(self, y, dt=1/250, is_log=False):
+    def __init__(self, y, dt=1/250, is_log=False, bounds=None):
         self.y = y
         self.logS0 = np.log(y[0]) if not is_log else y[0]
         self.dt = dt
+
+        # bounds for periodic map
+        if self.bounds is not None:
+            self.bounds = bounds 
+        else:
+            mu = (0.01, 1)
+            kappa = (1, 3)
+            theta = (1e-3, 0.2)
+            sigma = (1e-3, 0.7)
+            rho = (-1, 1)
+            v0 = (1e-3, 0.2)
+            self.bounds = [my, kappa, theta, sigma, rho, v0]
 
     def obj(self, params):
         mu, kappa, theta, sigma, rho, v0 = self._unwrap_params(params)
@@ -345,11 +370,12 @@ class UKFHeston(object):
                 else:
                     y = d + n*range - (x-c)
             return y
-        mu = periodic_map(params[0], -0.5, 1)
-        kappa = periodic_map(params[1], 1, 3)
-        theta = periodic_map(params[2], 0.001, 0.2)
-        sigma = periodic_map(params[3], 1e-3, 0.7)
-        rho = periodic_map(params[4], -1, 0)
-        v0 = periodic_map(params[5], 1e-3, 0.2) # ensure positive vt
+        b0, b1, b2, b3, b4, b5 = self.bounds
+        mu = periodic_map(params[0], b0[0], b0[1])
+        kappa = periodic_map(params[1], b1[0], b1[1])
+        theta = periodic_map(params[2], b2[0], b2[2])
+        sigma = periodic_map(params[3], b3[0], b3[3])
+        rho = periodic_map(params[4], b4[0], b4[4])
+        v0 = periodic_map(params[5], b5[0], b5[5])
         return mu, kappa, theta, sigma, rho, v0
     
