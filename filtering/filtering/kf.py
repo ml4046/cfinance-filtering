@@ -8,7 +8,7 @@ class EKFHeston(object):
         self.dt = dt # default to daily
 
         # bounds for periodic map
-        if self.bounds is not None:
+        if bounds is not None:
             self.bounds = bounds 
         else:
             mu = (0.01, 1)
@@ -144,10 +144,10 @@ class EKFHeston(object):
         b0, b1, b2, b3, b4, b5 = self.bounds
         mu = periodic_map(params[0], b0[0], b0[1])
         kappa = periodic_map(params[1], b1[0], b1[1])
-        theta = periodic_map(params[2], b2[0], b2[2])
-        sigma = periodic_map(params[3], b3[0], b3[3])
-        rho = periodic_map(params[4], b4[0], b4[4])
-        v0 = periodic_map(params[5], b5[0], b5[5]) # ensure positive vt
+        theta = periodic_map(params[2], b2[0], b2[1])
+        sigma = periodic_map(params[3], b3[0], b3[1])
+        rho = periodic_map(params[4], b4[0], b4[1])
+        v0 = periodic_map(params[5], b5[0], b5[1]) # ensure positive vt
         return mu, kappa, theta, sigma, rho, v0
 
 class UKFHeston(object):
@@ -157,7 +157,7 @@ class UKFHeston(object):
         self.dt = dt
 
         # bounds for periodic map
-        if self.bounds is not None:
+        if bounds is not None:
             self.bounds = bounds 
         else:
             mu = (0.01, 1)
@@ -373,9 +373,9 @@ class UKFHeston(object):
         b0, b1, b2, b3, b4, b5 = self.bounds
         mu = periodic_map(params[0], b0[0], b0[1])
         kappa = periodic_map(params[1], b1[0], b1[1])
-        theta = periodic_map(params[2], b2[0], b2[2])
-        sigma = periodic_map(params[3], b3[0], b3[3])
-        rho = periodic_map(params[4], b4[0], b4[4])
-        v0 = periodic_map(params[5], b5[0], b5[5])
+        theta = periodic_map(params[2], b2[0], b2[1])
+        sigma = periodic_map(params[3], b3[0], b3[1])
+        rho = periodic_map(params[4], b4[0], b4[1])
+        v0 = periodic_map(params[5], b5[0], b5[1])
         return mu, kappa, theta, sigma, rho, v0
     
