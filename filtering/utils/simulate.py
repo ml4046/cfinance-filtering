@@ -108,9 +108,12 @@ def simulate_vgsa(params, S0, N=1000, dt=1/250):
     logs[0] = np.log(S0)
     si = logs[0]
     yi = 1/nu
+    arrival_rates = np.zeros(N+1)
+    arrival_rates[0] = 1/yi
     for i in range(1, N+1):
         z = norm.rvs()
         yj = yi + kappa*(eta-yi)*dt + lda*np.sqrt(yi*dt)*z + lda**2/4*dt*(z**2-1)
+        yj = max(1e-5, yi)
         t = dt/2*(yj+yi)
         g = gamma(t/nu, nu)
         z = norm.rvs()
@@ -122,7 +125,9 @@ def simulate_vgsa(params, S0, N=1000, dt=1/250):
         sj = si + mu*dt + omega + X
         logs[i] = sj
         jumps[i] = X
+        arrival_rates[i] = 1/yj
         si = sj
+        yi = yj
 
     jumps[0] = jumps[1]
     return logs, jumps

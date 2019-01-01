@@ -306,6 +306,7 @@ class PFVGSA(object):
                 xj = self.resample(xj, xi, params_states)
 
             weights = weights * self.likelihood_arrival(xj, params_states)
+            weights[np.isnan(weights)] = 0
             weights = weights/sum(weights)
 
             # Resampling
@@ -359,7 +360,6 @@ class PFVGSA(object):
                 print('resampling since: {}'.format(self._neff(weights)))
                 params_states, _ = self._systematic_resample_states(params_states, weights)
                 xj_uncond, weights = self._systematic_resample(xj_uncond, weights)
-
             vol[i] = np.sum(weights*xj_uncond)
             arrivals[i] = np.sum(weights * aj)
             params_steps.transpose()[i] = np.sum(np.multiply(params_states, weights[np.newaxis, :]), axis=1)
