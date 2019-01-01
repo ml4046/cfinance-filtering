@@ -17,7 +17,7 @@ class EKFHeston(object):
             sigma = (1e-3, 0.7)
             rho = (-1, 1)
             v0 = (1e-3, 0.2)
-            self.bounds = [my, kappa, theta, sigma, rho, v0]
+            self.bounds = [mu, kappa, theta, sigma, rho, v0]
 
     def observation_transition(self, x, params):
         """
@@ -166,7 +166,7 @@ class UKFHeston(object):
             sigma = (1e-3, 0.7)
             rho = (-1, 1)
             v0 = (1e-3, 0.2)
-            self.bounds = [my, kappa, theta, sigma, rho, v0]
+            self.bounds = [mu, kappa, theta, sigma, rho, v0]
 
     def obj(self, params):
         mu, kappa, theta, sigma, rho, v0 = self._unwrap_params(params)
@@ -204,7 +204,7 @@ class UKFHeston(object):
         Performs simplex optimization for parameter estimation
         """
         mu, kappa, theta, sigma, rho, v0 = self._unwrap_params(init_params)
-        print([mu, kappa, theta, sigma, rho, v0])
+        # print([mu, kappa, theta, sigma, rho, v0])
         self.num_iter = 1
         def callbackF(xi):
             global arg
